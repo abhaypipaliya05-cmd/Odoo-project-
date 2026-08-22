@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useCallback } from 'react';
 import { ActivitySummary, TripDetail, TripSummary, TripStopDetail } from '@/types';
 import { api } from '@/lib/api';
 import {
@@ -15,8 +15,9 @@ import {
   RefreshCw,
   PlusCircle,
   ArrowRight,
+  AlertTriangle,
 } from 'lucide-react';
-import { formatDate, formatCurrency } from '@/lib/utils';
+import { formatDate, formatCurrency, toNormalizedYMD } from '@/lib/utils';
 import Link from 'next/link';
 
 interface AddActivityToTripModalProps {
@@ -24,6 +25,7 @@ interface AddActivityToTripModalProps {
   isOpen: boolean;
   onClose: () => void;
   onSuccess?: (tripId: string) => void;
+  onOpenAddCityStop?: (cityId: string, cityName?: string) => void;
 }
 
 export function AddActivityToTripModal({
@@ -31,6 +33,7 @@ export function AddActivityToTripModal({
   isOpen,
   onClose,
   onSuccess,
+  onOpenAddCityStop,
 }: AddActivityToTripModalProps) {
   const [trips, setTrips] = useState<TripSummary[]>([]);
   const [loadingTrips, setLoadingTrips] = useState(false);
@@ -51,6 +54,23 @@ export function AddActivityToTripModal({
   const [error, setError] = useState<string | null>(null);
   const [successTripId, setSuccessTripId] = useState<string | null>(null);
 
+  // Keyboard accessibility: Close on Escape key
+  const handleKeyDown = useCallback(
+    (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        onClose();
+      }
+    },
+    [onClose]
+  );
+
+  useEffect(() => {
+    if (isOpen) {
+      window.addEventListener('keydown', handleKeyDown);
+      return () => window.removeEventListener('keydown', handleKeyDown);
+    }
+  }, [isOpen, handleKeyDown]);
+
   // Load user trips on modal open
   useEffect(() => {
     if (isOpen) {
@@ -58,7 +78,11 @@ export function AddActivityToTripModal({
       setError(null);
       if (activity) {
         setDurationMinutes(String(activity.durationMinutes || 60));
-        setActualCost(String(activity.estimatedCost || 0));
+        setActualCost(
+          activity.estimatedCost !== undefined && activity.estimatedCost !== null
+            ? String(activity.estimatedCost)
+            : '0'
+        );
       }
 
       const loadTrips = async () => {
@@ -66,8 +90,10 @@ export function AddActivityToTripModal({
         try {
           const userTrips = await api.getTrips();
           setTrips(userTrips);
-          if (userTrips.length > 0) {
+          if (userTrips && userTrips.length > 0) {
             setSelectedTripId(userTrips[0].id);
+          } else {
+            setSelectedTripId('');
           }
         } catch (err: any) {
           console.error('Failed to load trips:', err);
@@ -105,13 +131,15 @@ export function AddActivityToTripModal({
         }
       };
       loadTripDetail();
+    } else {
+      setTripDetail(null);
+      setSelectedStopId('');
     }
   }, [selectedTripId, activity?.cityId]);
 
   const syncScheduleDateWithStop = (stop: TripStopDetail) => {
-    const arrivalIso =
-      typeof stop.arrivalDate === 'string' ? stop.arrivalDate : stop.arrivalDate.toISOString();
-    setScheduledDate(arrivalIso.split('T')[0]);
+    const arrivalYmd = toNormalizedYMD(stop.arrivalDate);
+    setScheduledDate(arrivalYmd);
   };
 
   const handleStopChange = (stopId: string) => {
@@ -123,6 +151,7 @@ export function AddActivityToTripModal({
   };
 
   const selectedStop = tripDetail?.stops?.find((s) => s.id === selectedStopId);
+  const matchingStopExists = tripDetail?.stops?.some((s) => s.cityId === activity?.cityId);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -130,33 +159,43 @@ export function AddActivityToTripModal({
 
     setError(null);
 
-    // Validate Activity Scheduled Date within Stop Dates
-    const stopArrival = new Date(selectedStop.arrivalDate);
-    const stopDeparture = new Date(selectedStop.departureDate);
-    const activityDate = new Date(scheduledDate);
+    // Normalize dates for boundary checks
+    const stopArrival = toNormalizedYMD(selectedStop.arrivalDate);
+    const stopDeparture = toNormalizedYMD(selectedStop.departureDate);
+    const actDate = toNormalizedYMD(scheduledDate);
 
-    if (isNaN(activityDate.getTime())) {
+    if (!actDate) {
       setError('Please select a valid scheduled date.');
       return;
     }
 
-    if (activityDate < stopArrival || activityDate > stopDeparture) {
+    if (actDate < stopArrival || actDate > stopDeparture) {
       setError(
         `Scheduled date must fall within stop dates for ${selectedStop.city.name} (${formatDate(
-          stopArrival
-        )} – ${formatDate(stopDeparture)}).`
+          selectedStop.arrivalDate
+        )} – ${formatDate(selectedStop.departureDate)}).`
       );
       return;
     }
 
     setSubmitting(true);
     try {
+      const costValue =
+        actualCost !== '' && actualCost !== null && !isNaN(Number(actualCost))
+          ? Number(actualCost)
+          : 0;
+
+      const durationValue =
+        durationMinutes !== '' && durationMinutes !== null && !isNaN(Number(durationMinutes))
+          ? Number(durationMinutes)
+          : 60;
+
       await api.addTripActivity(selectedTripId, selectedStopId, {
         activityId: activity.id,
-        scheduledDate: new Date(scheduledDate).toISOString(),
+        scheduledDate: new Date(`${actDate}T00:00:00.000Z`).toISOString(),
         startTime: startTime || undefined,
-        durationMinutes: durationMinutes ? Number(durationMinutes) : 60,
-        actualCost: actualCost ? Number(actualCost) : 0,
+        durationMinutes: durationValue,
+        actualCost: costValue,
         category: activity.category,
         notes: notes.trim() || undefined,
       });
@@ -176,7 +215,12 @@ export function AddActivityToTripModal({
   if (!isOpen || !activity) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 sm:p-6 md:p-10 overflow-y-auto">
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="add-activity-modal-title"
+      className="fixed inset-0 z-50 flex items-center justify-center p-4 sm:p-6 md:p-10 overflow-y-auto"
+    >
       {/* Backdrop */}
       <div
         className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm transition-opacity"
@@ -192,7 +236,9 @@ export function AddActivityToTripModal({
               <Compass className="w-5 h-5" />
             </div>
             <div>
-              <h2 className="text-lg font-bold truncate max-w-xs">{activity.title}</h2>
+              <h2 id="add-activity-modal-title" className="text-lg font-bold truncate max-w-xs">
+                {activity.title}
+              </h2>
               <p className="text-xs text-slate-300">
                 {activity.category} • {activity.cityName || 'Curated Experience'}
               </p>
@@ -202,6 +248,8 @@ export function AddActivityToTripModal({
           <button
             onClick={onClose}
             className="p-2 rounded-xl bg-white/10 hover:bg-white/20 text-white transition-colors"
+            title="Close modal (Esc)"
+            aria-label="Close modal"
           >
             <X className="w-4 h-4" />
           </button>
@@ -240,6 +288,40 @@ export function AddActivityToTripModal({
                 </button>
               </div>
             </div>
+          ) : loadingTrips ? (
+            <div className="p-12 text-center space-y-3">
+              <RefreshCw className="w-8 h-8 text-sky-600 animate-spin mx-auto" />
+              <p className="text-xs text-slate-500 font-medium">Loading your trip list...</p>
+            </div>
+          ) : trips.length === 0 ? (
+            /* Tripless Empty State */
+            <div className="p-8 text-center space-y-4 bg-slate-50 rounded-2xl border border-slate-200">
+              <div className="w-14 h-14 rounded-2xl bg-sky-100 text-sky-700 mx-auto flex items-center justify-center">
+                <Compass className="w-7 h-7" />
+              </div>
+              <div className="space-y-1">
+                <h3 className="text-base font-bold text-slate-900">No Trips Created Yet</h3>
+                <p className="text-xs text-slate-500 max-w-sm mx-auto leading-relaxed">
+                  You do not have any trips yet. Create a new trip to schedule{' '}
+                  <strong>{activity.title}</strong> into your itinerary.
+                </p>
+              </div>
+              <div className="pt-2 flex items-center justify-center gap-3">
+                <Link
+                  href={`/trips/create?destination=${encodeURIComponent(activity.cityName || '')}`}
+                  className="inline-flex items-center gap-2 px-5 py-2.5 bg-slate-900 hover:bg-slate-800 text-white rounded-xl text-xs font-bold shadow-md transition-all"
+                >
+                  <PlusCircle className="w-4 h-4 text-sky-400" />
+                  Create a Trip
+                </Link>
+                <button
+                  onClick={onClose}
+                  className="px-4 py-2.5 rounded-xl border border-slate-200 bg-white text-slate-700 text-xs font-semibold hover:bg-slate-100 transition-colors"
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
           ) : (
             <form onSubmit={handleSubmit} className="space-y-4">
               {error && (
@@ -254,7 +336,7 @@ export function AddActivityToTripModal({
                 <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1.5 flex items-center justify-between">
                   <span>Choose Trip Itinerary</span>
                   <Link
-                    href="/trips/create"
+                    href={`/trips/create?destination=${encodeURIComponent(activity.cityName || '')}`}
                     className="text-sky-600 hover:text-sky-700 normal-case font-semibold text-[11px] flex items-center gap-1"
                   >
                     <PlusCircle className="w-3 h-3" />
@@ -262,39 +344,20 @@ export function AddActivityToTripModal({
                   </Link>
                 </label>
 
-                {loadingTrips ? (
-                  <div className="p-3 rounded-xl border border-slate-200 text-xs text-slate-400 flex items-center gap-2">
-                    <RefreshCw className="w-3.5 h-3.5 animate-spin text-sky-600" />
-                    Loading your trips...
-                  </div>
-                ) : trips.length > 0 ? (
-                  <select
-                    value={selectedTripId}
-                    onChange={(e) => setSelectedTripId(e.target.value)}
-                    className="w-full px-3.5 py-2.5 rounded-xl border border-slate-200 bg-white text-xs font-semibold text-slate-900 focus:outline-none focus:ring-2 focus:ring-sky-500/20 focus:border-sky-500"
-                  >
-                    {trips.map((t) => (
-                      <option key={t.id} value={t.id}>
-                        {t.title} ({formatDate(t.startDate)} – {formatDate(t.endDate)})
-                      </option>
-                    ))}
-                  </select>
-                ) : (
-                  <div className="p-4 rounded-xl bg-amber-50 border border-amber-200 text-amber-800 text-xs space-y-2">
-                    <p className="font-semibold">No active trips found.</p>
-                    <p className="text-[11px]">Create a trip first to schedule this activity.</p>
-                    <Link
-                      href="/trips/create"
-                      className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-slate-900 text-white rounded-lg text-[11px] font-bold"
-                    >
-                      <PlusCircle className="w-3.5 h-3.5" />
-                      Create Trip
-                    </Link>
-                  </div>
-                )}
+                <select
+                  value={selectedTripId}
+                  onChange={(e) => setSelectedTripId(e.target.value)}
+                  className="w-full px-3.5 py-2.5 rounded-xl border border-slate-200 bg-white text-xs font-semibold text-slate-900 focus:outline-none focus:ring-2 focus:ring-sky-500/20 focus:border-sky-500"
+                >
+                  {trips.map((t) => (
+                    <option key={t.id} value={t.id}>
+                      {t.title} ({formatDate(t.startDate)} – {formatDate(t.endDate)})
+                    </option>
+                  ))}
+                </select>
               </div>
 
-              {/* Stop Selector (if trip selected) */}
+              {/* Stop Selector & Missing Stop Handling */}
               {selectedTripId && (
                 <div>
                   <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1.5">
@@ -307,31 +370,65 @@ export function AddActivityToTripModal({
                       Loading trip stops...
                     </div>
                   ) : tripDetail?.stops && tripDetail.stops.length > 0 ? (
-                    <select
-                      value={selectedStopId}
-                      onChange={(e) => handleStopChange(e.target.value)}
-                      className="w-full px-3.5 py-2.5 rounded-xl border border-slate-200 bg-white text-xs font-semibold text-slate-900 focus:outline-none focus:ring-2 focus:ring-sky-500/20 focus:border-sky-500"
-                    >
-                      {tripDetail.stops.map((stop) => (
-                        <option key={stop.id} value={stop.id}>
-                          {stop.city.name}, {stop.city.country} ({formatDate(stop.arrivalDate)} –{' '}
-                          {formatDate(stop.departureDate)})
-                        </option>
-                      ))}
-                    </select>
-                  ) : (
-                    <div className="p-4 rounded-xl bg-amber-50 border border-amber-200 text-amber-800 text-xs space-y-2">
-                      <p className="font-semibold">This trip does not have any city stops yet.</p>
-                      <p className="text-[11px]">
-                        Please add a destination stop to this trip before scheduling activities.
-                      </p>
-                      <Link
-                        href={`/trips/${selectedTripId}`}
-                        className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-slate-900 text-white rounded-lg text-[11px] font-bold"
+                    <div className="space-y-2.5">
+                      <select
+                        value={selectedStopId}
+                        onChange={(e) => handleStopChange(e.target.value)}
+                        className="w-full px-3.5 py-2.5 rounded-xl border border-slate-200 bg-white text-xs font-semibold text-slate-900 focus:outline-none focus:ring-2 focus:ring-sky-500/20 focus:border-sky-500"
                       >
-                        <MapPin className="w-3.5 h-3.5" />
-                        Manage Trip Stops
-                      </Link>
+                        {tripDetail.stops.map((stop) => (
+                          <option key={stop.id} value={stop.id}>
+                            {stop.city.name}, {stop.city.country} ({formatDate(stop.arrivalDate)} –{' '}
+                            {formatDate(stop.departureDate)})
+                            {stop.cityId === activity.cityId ? ' ★ (Matching Destination)' : ''}
+                          </option>
+                        ))}
+                      </select>
+
+                      {/* Missing Stop Warning Banner if selected stop is not matching activity city */}
+                      {!matchingStopExists && activity.cityName && (
+                        <div className="p-3 bg-amber-50/80 border border-amber-200 rounded-xl text-xs text-amber-900 space-y-1.5">
+                          <div className="flex items-center gap-1.5 font-bold text-amber-800">
+                            <AlertTriangle className="w-3.5 h-3.5 text-amber-600 shrink-0" />
+                            <span>Destination Note</span>
+                          </div>
+                          <p className="text-[11px] leading-relaxed text-amber-700">
+                            This trip does not currently have a stop for{' '}
+                            <strong>{activity.cityName}</strong>. You can schedule this activity
+                            under an existing stop, or add{' '}
+                            <strong>{activity.cityName}</strong> to your trip first.
+                          </p>
+                          <Link
+                            href={`/trips/${selectedTripId}`}
+                            className="inline-flex items-center gap-1 text-[11px] font-bold text-amber-900 underline hover:text-amber-950"
+                          >
+                            <MapPin className="w-3 h-3" />
+                            Add {activity.cityName} Stop in Itinerary
+                          </Link>
+                        </div>
+                      )}
+                    </div>
+                  ) : (
+                    /* Trip has zero stops */
+                    <div className="p-4 rounded-xl bg-amber-50 border border-amber-200 text-amber-800 text-xs space-y-2">
+                      <div className="flex items-center gap-1.5 font-bold">
+                        <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0" />
+                        <span>No Destination Stops in Selected Trip</span>
+                      </div>
+                      <p className="text-[11px] leading-relaxed text-amber-700">
+                        This trip doesn&apos;t have any destination stops yet. Add{' '}
+                        <strong>{activity.cityName || 'the city'}</strong> to this trip before
+                        scheduling activities.
+                      </p>
+                      <div className="pt-1 flex items-center gap-2">
+                        <Link
+                          href={`/trips/${selectedTripId}`}
+                          className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-slate-900 hover:bg-slate-800 text-white rounded-lg text-[11px] font-bold shadow-sm"
+                        >
+                          <MapPin className="w-3.5 h-3.5" />
+                          Add Stop to Trip
+                        </Link>
+                      </div>
                     </div>
                   )}
                 </div>

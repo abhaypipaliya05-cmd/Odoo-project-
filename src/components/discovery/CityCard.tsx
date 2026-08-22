@@ -1,6 +1,6 @@
 'use client';
 
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { CitySummary } from '@/types';
 import { Bookmark, MapPin, PlusCircle, Star, Info, DollarSign } from 'lucide-react';
 import { formatCurrency } from '@/lib/utils';
@@ -9,9 +9,12 @@ interface CityCardProps {
   city: CitySummary;
   onViewDetails?: (city: CitySummary) => void;
   onAddToTrip?: (city: CitySummary) => void;
-  onToggleSave?: (cityId: string) => void;
+  onToggleSave?: (cityId: string) => void | Promise<void>;
   isSaved?: boolean;
 }
+
+const FALLBACK_IMAGE =
+  'https://images.unsplash.com/photo-1488646953014-85cb44e25828?auto=format&fit=crop&w=800&q=80';
 
 export function CityCard({
   city,
@@ -20,6 +23,33 @@ export function CityCard({
   onToggleSave,
   isSaved = false,
 }: CityCardProps) {
+  const [localSaved, setLocalSaved] = useState(isSaved);
+  const [imgSrc, setImgSrc] = useState(city.imageUrl || FALLBACK_IMAGE);
+
+  useEffect(() => {
+    setLocalSaved(isSaved);
+  }, [isSaved]);
+
+  useEffect(() => {
+    setImgSrc(city.imageUrl || FALLBACK_IMAGE);
+  }, [city.imageUrl]);
+
+  const handleBookmarkClick = async (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!onToggleSave) return;
+
+    // Optimistic toggle
+    const previousState = localSaved;
+    setLocalSaved(!previousState);
+
+    try {
+      await onToggleSave(city.id);
+    } catch {
+      // Revert optimistic state on failure
+      setLocalSaved(previousState);
+    }
+  };
+
   const getCostBadgeColor = (costIndex: string) => {
     switch (costIndex) {
       case 'BUDGET':
@@ -37,15 +67,13 @@ export function CityCard({
       {/* Header Image Area */}
       <div className="relative h-52 bg-slate-100 overflow-hidden">
         <img
-          src={
-            city.imageUrl ||
-            'https://images.unsplash.com/photo-1488646953014-85cb44e25828?auto=format&fit=crop&w=800&q=80'
-          }
+          src={imgSrc}
           alt={city.name}
           className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
-          onError={(e) => {
-            (e.target as HTMLImageElement).src =
-              'https://images.unsplash.com/photo-1488646953014-85cb44e25828?auto=format&fit=crop&w=800&q=80';
+          onError={() => {
+            if (imgSrc !== FALLBACK_IMAGE) {
+              setImgSrc(FALLBACK_IMAGE);
+            }
           }}
         />
         <div className="absolute inset-0 bg-gradient-to-t from-slate-950/80 via-slate-950/20 to-transparent" />
@@ -61,22 +89,19 @@ export function CityCard({
           </span>
         </div>
 
-        {/* Wishlist / Bookmark Toggle */}
+        {/* Optimistic Wishlist / Bookmark Toggle */}
         {onToggleSave && (
           <button
-            onClick={(e) => {
-              e.stopPropagation();
-              onToggleSave(city.id);
-            }}
+            onClick={handleBookmarkClick}
             className={`absolute top-3 right-3 p-2 rounded-full backdrop-blur-md border transition-all ${
-              isSaved
+              localSaved
                 ? 'bg-rose-500 text-white border-rose-400 shadow-md shadow-rose-500/20 scale-105'
                 : 'bg-black/40 text-white border-white/20 hover:bg-black/60 hover:scale-105'
             }`}
-            title={isSaved ? 'Remove from wishlist' : 'Save to wishlist'}
-            aria-label={isSaved ? 'Remove from wishlist' : 'Save to wishlist'}
+            title={localSaved ? 'Remove from wishlist' : 'Save to wishlist'}
+            aria-label={localSaved ? 'Remove from wishlist' : 'Save to wishlist'}
           >
-            <Bookmark className={`w-4 h-4 ${isSaved ? 'fill-white' : ''}`} />
+            <Bookmark className={`w-4 h-4 ${localSaved ? 'fill-white' : ''}`} />
           </button>
         )}
 
@@ -107,7 +132,10 @@ export function CityCard({
             </span>
             <span className="font-extrabold text-slate-900 flex items-center gap-0.5">
               <DollarSign className="w-3.5 h-3.5 text-emerald-600 -mr-0.5" />
-              {city.averageDailyCost} <span className="text-[11px] font-normal text-slate-500">/ day</span>
+              {city.averageDailyCost !== undefined && city.averageDailyCost !== null
+                ? city.averageDailyCost
+                : 0}{' '}
+              <span className="text-[11px] font-normal text-slate-500">/ day</span>
             </span>
           </div>
 

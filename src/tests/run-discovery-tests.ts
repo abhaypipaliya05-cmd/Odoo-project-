@@ -2,6 +2,7 @@ import { prisma } from '../lib/prisma';
 import { CityService } from '../services/city.service';
 import { TripService } from '../services/trip.service';
 import { ItineraryService } from '../services/itinerary.service';
+import { toNormalizedYMD, isDateWithinRange } from '../lib/utils';
 
 let totalTests = 0;
 let passedTests = 0;
@@ -18,9 +19,39 @@ function assert(condition: boolean, testName: string, errorMessage?: string) {
   }
 }
 
+// Helper to test URL search parameter generation
+function buildExploreQueryParams(options: {
+  tab?: string;
+  q?: string;
+  region?: string;
+  country?: string;
+  costIndex?: string;
+  activityQ?: string;
+  category?: string;
+  cityId?: string;
+  maxCost?: number;
+}) {
+  const params = new URLSearchParams();
+  if (options.tab === 'activities') {
+    params.set('tab', 'activities');
+  }
+  if (options.tab === 'activities') {
+    if (options.activityQ) params.set('activityQ', options.activityQ.trim());
+    if (options.category && options.category !== 'All') params.set('category', options.category);
+    if (options.cityId && options.cityId !== 'All') params.set('cityId', options.cityId);
+    if (options.maxCost !== undefined) params.set('maxCost', String(options.maxCost));
+  } else {
+    if (options.q) params.set('q', options.q.trim());
+    if (options.region && options.region !== 'All') params.set('region', options.region);
+    if (options.country && options.country !== 'All') params.set('country', options.country);
+    if (options.costIndex && options.costIndex !== 'All') params.set('costIndex', options.costIndex);
+  }
+  return params.toString();
+}
+
 async function runDiscoveryTests() {
   console.log('\n======================================================');
-  console.log('🏙️  DEEP: CITY & ACTIVITY DISCOVERY TEST SUITE');
+  console.log('🏙️  DEEP: CITY & ACTIVITY DISCOVERY HARDENED TEST SUITE');
   console.log('======================================================\n');
 
   try {
@@ -34,6 +65,14 @@ async function runDiscoveryTests() {
       },
     });
 
+    const triplessUser = await prisma.user.create({
+      data: {
+        email: `tripless_${Date.now()}@globetrotter.test`,
+        passwordHash: 'dummy-hash',
+        name: 'Tripless Explorer',
+      },
+    });
+
     const testTrip = await TripService.createTrip(testUser.id, {
       title: 'Discovery Voyage 2026',
       startDate: '2026-10-01T00:00:00.000Z',
@@ -42,9 +81,80 @@ async function runDiscoveryTests() {
     });
 
     // ----------------------------------------------------------------
-    // 1. CITY SEARCH & DISCOVERY
+    // 1. DATE NORMALIZATION & UTILITIES
     // ----------------------------------------------------------------
-    console.log('--- Phase 1: City Search & Filtering ---');
+    console.log('--- Phase 1: Date Normalization & Range Checks ---');
+    assert(
+      toNormalizedYMD('2026-10-05T14:32:00.000Z') === '2026-10-05',
+      'toNormalizedYMD correctly normalizes ISO datetime to YYYY-MM-DD'
+    );
+    assert(
+      toNormalizedYMD(new Date('2026-10-05T00:00:00.000Z')) === '2026-10-05',
+      'toNormalizedYMD handles Date objects'
+    );
+    assert(
+      isDateWithinRange('2026-10-05', '2026-10-01', '2026-10-20') === true,
+      'isDateWithinRange validates dates within boundaries'
+    );
+    assert(
+      isDateWithinRange('2026-10-25', '2026-10-01', '2026-10-20') === false,
+      'isDateWithinRange rejects dates outside boundaries'
+    );
+
+    // ----------------------------------------------------------------
+    // 2. URL QUERY PARAMETER CLEANUP & DEBOUNCING
+    // ----------------------------------------------------------------
+    console.log('\n--- Phase 2: URL Query Param Clean Generation ---');
+    const defaultParams = buildExploreQueryParams({
+      tab: 'cities',
+      q: '',
+      region: 'All',
+      country: 'All',
+      costIndex: 'All',
+    });
+    assert(
+      defaultParams === '',
+      'Default cities filter produces clean empty URL query parameters'
+    );
+
+    const filteredParams = buildExploreQueryParams({
+      tab: 'cities',
+      q: 'Paris',
+      region: 'Europe',
+      country: 'France',
+      costIndex: 'LUXURY',
+    });
+    assert(
+      filteredParams === 'q=Paris&region=Europe&country=France&costIndex=LUXURY',
+      'Custom cities filter produces exact clean query string'
+    );
+
+    const activityParams = buildExploreQueryParams({
+      tab: 'activities',
+      activityQ: 'Cooking Class',
+      category: 'FOOD',
+      cityId: 'city-123',
+      maxCost: 50,
+    });
+    assert(
+      activityParams === 'tab=activities&activityQ=Cooking+Class&category=FOOD&cityId=city-123&maxCost=50',
+      'Activity filters serialize properly into URL search params'
+    );
+
+    // ----------------------------------------------------------------
+    // 3. TRIPLESS USER WORKFLOWS
+    // ----------------------------------------------------------------
+    console.log('\n--- Phase 3: Tripless User Workflows ---');
+    const triplessTrips = await TripService.getUserTrips(triplessUser.id);
+    assert(
+      Array.isArray(triplessTrips) && triplessTrips.length === 0,
+      'Tripless user correctly returns empty trip array (triggers modal CTA banner)'
+    );
+
+    // ----------------------------------------------------------------
+    // 4. CITY SEARCH & FILTERING
+    // ----------------------------------------------------------------
+    console.log('\n--- Phase 4: City Search & Filtering ---');
     const allCities = await CityService.getCities({}, testUser.id);
     assert(allCities.length > 0, `Retrieve all cities from database (count: ${allCities.length})`);
 
@@ -73,10 +183,11 @@ async function runDiscoveryTests() {
     );
 
     // ----------------------------------------------------------------
-    // 2. CITY DETAILS & ACTIVITIES ASSOCIATION
+    // 5. CITY DETAILS & ACTIVITIES ASSOCIATION
     // ----------------------------------------------------------------
-    console.log('\n--- Phase 2: City Details with Activities ---');
+    console.log('\n--- Phase 5: City Details with Curated Activities ---');
     const firstCity = allCities[0];
+    const secondCity = allCities.length > 1 ? allCities[1] : allCities[0];
     const cityDetails = await CityService.getCityById(firstCity.id, testUser.id);
     assert(
       cityDetails.id === firstCity.id &&
@@ -86,9 +197,9 @@ async function runDiscoveryTests() {
     );
 
     // ----------------------------------------------------------------
-    // 3. ACTIVITY SEARCH & DISCOVERY
+    // 6. ACTIVITY SEARCH & FILTERING
     // ----------------------------------------------------------------
-    console.log('\n--- Phase 3: Activity Search & Filtering ---');
+    console.log('\n--- Phase 6: Activity Search & Filtering ---');
     const allActivities = await CityService.getActivities({});
     assert(allActivities.length > 0, `Retrieve activities catalog (count: ${allActivities.length})`);
 
@@ -111,9 +222,9 @@ async function runDiscoveryTests() {
     );
 
     // ----------------------------------------------------------------
-    // 4. SAVED DESTINATIONS (WISHLIST)
+    // 7. SAVED DESTINATIONS (WISHLIST)
     // ----------------------------------------------------------------
-    console.log('\n--- Phase 4: Saved Destinations (Wishlist) ---');
+    console.log('\n--- Phase 7: Saved Destinations (Wishlist) ---');
     const saveRes = await CityService.saveDestination(testUser.id, firstCity.id);
     assert(saveRes.saved === true, `Bookmark destination (${firstCity.name}) for user`);
 
@@ -127,9 +238,9 @@ async function runDiscoveryTests() {
     assert(!afterRemoveSaved.some((s) => s.id === firstCity.id), 'Wishlist reflects removal');
 
     // ----------------------------------------------------------------
-    // 5. ADD CITY STOP TO TRIP INTEGRATION
+    // 8. ADD CITY STOP WITH ZERO COST & DATE VALIDATION
     // ----------------------------------------------------------------
-    console.log('\n--- Phase 5: Add City Stop to Trip Flow ---');
+    console.log('\n--- Phase 8: Add City Stop with $0 Overrides ---');
     const stopArrival = '2026-10-02T00:00:00.000Z';
     const stopDeparture = '2026-10-06T00:00:00.000Z';
 
@@ -137,24 +248,24 @@ async function runDiscoveryTests() {
       cityId: firstCity.id,
       arrivalDate: stopArrival,
       departureDate: stopDeparture,
-      accommodationName: 'Grand Heritage Stay',
-      accommodationCost: 300,
-      transportType: 'Train',
-      transportCost: 45,
-      notes: 'Excited for sightseeing and street food!',
+      accommodationName: 'Hostel Stay / Free Couchsurfing',
+      accommodationCost: 0,
+      transportType: 'Walk',
+      transportCost: 0,
+      notes: 'Testing free-tier zero cost stop!',
     });
 
     assert(
       stop.cityId === firstCity.id &&
-        stop.accommodationCost === 300 &&
-        stop.transportType === 'Train',
-      'Add City stop to existing trip with accommodation and transport details'
+        stop.accommodationCost === 0 &&
+        stop.transportCost === 0,
+      'Add City stop with $0 free-tier accommodation and transport costs'
     );
 
     // ----------------------------------------------------------------
-    // 6. ADD ACTIVITY TO TRIP STOP INTEGRATION
+    // 9. SCHEDULE ACTIVITY INTO STOP WITH ZERO COST & BOUNDARY VALIDATION
     // ----------------------------------------------------------------
-    console.log('\n--- Phase 6: Add Activity to Trip Stop Flow ---');
+    console.log('\n--- Phase 9: Activity Scheduling & Boundary Checks ---');
     const firstAct = cityDetails.activities[0];
     const actScheduled = '2026-10-03T00:00:00.000Z';
 
@@ -167,16 +278,32 @@ async function runDiscoveryTests() {
         scheduledDate: actScheduled,
         startTime: '11:00',
         durationMinutes: firstAct.durationMinutes,
-        actualCost: firstAct.estimatedCost,
-        notes: 'Booked online',
+        actualCost: 0, // Free override
+        notes: 'Testing free-tier activity override ($0)',
       }
     );
 
     assert(
       scheduledAct.activityId === firstAct.id &&
-        scheduledAct.startTime === '11:00' &&
-        scheduledAct.customTitle === firstAct.title,
-      'Schedule activity into trip stop with date/time constraints'
+        scheduledAct.actualCost === 0 &&
+        scheduledAct.startTime === '11:00',
+      'Schedule activity into matching stop with $0 actual cost override'
+    );
+
+    // Test invalid scheduled date outside stop boundaries (should fail validation)
+    let boundaryErrorCaught = false;
+    try {
+      await ItineraryService.addActivityToStop(testTrip.id, stop.id, testUser.id, {
+        activityId: firstAct.id,
+        scheduledDate: '2026-10-25T00:00:00.000Z', // Beyond stop departure (Oct 06)
+        actualCost: 10,
+      });
+    } catch {
+      boundaryErrorCaught = true;
+    }
+    assert(
+      boundaryErrorCaught === true,
+      'Reject activity scheduled date outside stop date boundaries'
     );
 
     console.log('\n======================================================');

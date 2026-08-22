@@ -1,6 +1,6 @@
 'use client';
 
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { ActivitySummary } from '@/types';
 import {
   Clock,
@@ -28,6 +28,9 @@ interface ActivityCardProps {
   isScheduled?: boolean;
 }
 
+const FALLBACK_ACTIVITY_IMAGE =
+  'https://images.unsplash.com/photo-1469854523086-cc02fe5d8800?auto=format&fit=crop&w=800&q=80';
+
 export function ActivityCard({
   activity,
   onViewDetails,
@@ -35,6 +38,12 @@ export function ActivityCard({
   onRemoveFromTrip,
   isScheduled = false,
 }: ActivityCardProps) {
+  const [imgSrc, setImgSrc] = useState(activity.imageUrl || FALLBACK_ACTIVITY_IMAGE);
+
+  useEffect(() => {
+    setImgSrc(activity.imageUrl || FALLBACK_ACTIVITY_IMAGE);
+  }, [activity.imageUrl]);
+
   const getCategoryTheme = (category: string) => {
     switch (category) {
       case 'FOOD':
@@ -83,15 +92,13 @@ export function ActivityCard({
       {/* Header Image Area */}
       <div className="relative h-48 bg-slate-100 overflow-hidden">
         <img
-          src={
-            activity.imageUrl ||
-            'https://images.unsplash.com/photo-1469854523086-cc02fe5d8800?auto=format&fit=crop&w=800&q=80'
-          }
+          src={imgSrc}
           alt={activity.title}
           className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
-          onError={(e) => {
-            (e.target as HTMLImageElement).src =
-              'https://images.unsplash.com/photo-1469854523086-cc02fe5d8800?auto=format&fit=crop&w=800&q=80';
+          onError={() => {
+            if (imgSrc !== FALLBACK_ACTIVITY_IMAGE) {
+              setImgSrc(FALLBACK_ACTIVITY_IMAGE);
+            }
           }}
         />
         <div className="absolute inset-0 bg-gradient-to-t from-slate-950/80 via-slate-950/20 to-transparent" />
@@ -156,7 +163,11 @@ export function ActivityCard({
               Estimated Cost
             </span>
             <span className="font-extrabold text-slate-900">
-              {activity.estimatedCost > 0 ? formatCurrency(activity.estimatedCost) : 'Free'}
+              {activity.estimatedCost !== undefined && activity.estimatedCost !== null
+                ? activity.estimatedCost > 0
+                  ? formatCurrency(activity.estimatedCost)
+                  : 'Free ($0)'
+                : 'Free ($0)'}
             </span>
           </div>
         </div>

@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useCallback } from 'react';
 import { CitySummary, CityWithActivities, ActivitySummary } from '@/types';
 import { api } from '@/lib/api';
 import {
@@ -24,9 +24,12 @@ interface CityDetailModalProps {
   onClose: () => void;
   onAddToTrip?: (city: CitySummary) => void;
   onAddActivityToTrip?: (activity: ActivitySummary) => void;
-  onToggleSave?: (cityId: string) => void;
+  onToggleSave?: (cityId: string) => void | Promise<void>;
   isSaved?: boolean;
 }
+
+const FALLBACK_MODAL_IMAGE =
+  'https://images.unsplash.com/photo-1488646953014-85cb44e25828?auto=format&fit=crop&w=1200&q=80';
 
 export function CityDetailModal({
   city,
@@ -40,6 +43,35 @@ export function CityDetailModal({
   const [cityDetails, setCityDetails] = useState<CityWithActivities | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [localSaved, setLocalSaved] = useState(isSaved);
+  const [imgSrc, setImgSrc] = useState(city?.imageUrl || FALLBACK_MODAL_IMAGE);
+
+  // Escape key handler
+  const handleKeyDown = useCallback(
+    (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        onClose();
+      }
+    },
+    [onClose]
+  );
+
+  useEffect(() => {
+    if (isOpen) {
+      window.addEventListener('keydown', handleKeyDown);
+      return () => window.removeEventListener('keydown', handleKeyDown);
+    }
+  }, [isOpen, handleKeyDown]);
+
+  useEffect(() => {
+    setLocalSaved(isSaved);
+  }, [isSaved]);
+
+  useEffect(() => {
+    if (city) {
+      setImgSrc(city.imageUrl || FALLBACK_MODAL_IMAGE);
+    }
+  }, [city]);
 
   useEffect(() => {
     if (isOpen && city?.id) {
@@ -61,6 +93,17 @@ export function CityDetailModal({
       setCityDetails(null);
     }
   }, [isOpen, city?.id]);
+
+  const handleBookmarkClick = async () => {
+    if (!city || !onToggleSave) return;
+    const previous = localSaved;
+    setLocalSaved(!previous);
+    try {
+      await onToggleSave(city.id);
+    } catch {
+      setLocalSaved(previous);
+    }
+  };
 
   if (!isOpen || !city) return null;
 
@@ -97,7 +140,12 @@ export function CityDetailModal({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 sm:p-6 md:p-10 overflow-y-auto">
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="city-detail-modal-title"
+      className="fixed inset-0 z-50 flex items-center justify-center p-4 sm:p-6 md:p-10 overflow-y-auto"
+    >
       {/* Backdrop */}
       <div
         className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm transition-opacity"
@@ -109,15 +157,13 @@ export function CityDetailModal({
         {/* Cover Photo & Header */}
         <div className="relative h-64 sm:h-72 w-full bg-slate-900 shrink-0 overflow-hidden">
           <img
-            src={
-              city.imageUrl ||
-              'https://images.unsplash.com/photo-1488646953014-85cb44e25828?auto=format&fit=crop&w=1200&q=80'
-            }
+            src={imgSrc}
             alt={city.name}
             className="w-full h-full object-cover opacity-90"
-            onError={(e) => {
-              (e.target as HTMLImageElement).src =
-                'https://images.unsplash.com/photo-1488646953014-85cb44e25828?auto=format&fit=crop&w=1200&q=80';
+            onError={() => {
+              if (imgSrc !== FALLBACK_MODAL_IMAGE) {
+                setImgSrc(FALLBACK_MODAL_IMAGE);
+              }
             }}
           />
           <div className="absolute inset-0 bg-gradient-to-t from-slate-950 via-slate-950/40 to-transparent" />
@@ -135,22 +181,24 @@ export function CityDetailModal({
             <div className="flex items-center gap-2">
               {onToggleSave && (
                 <button
-                  onClick={() => onToggleSave(city.id)}
+                  onClick={handleBookmarkClick}
                   className={`p-2.5 rounded-full backdrop-blur-md border transition-all ${
-                    isSaved
-                      ? 'bg-rose-500 text-white border-rose-400 shadow-lg shadow-rose-500/20'
+                    localSaved
+                      ? 'bg-rose-500 text-white border-rose-400 shadow-lg shadow-rose-500/20 scale-105'
                       : 'bg-black/40 text-white border-white/20 hover:bg-black/60'
                   }`}
-                  title={isSaved ? 'Saved in wishlist' : 'Save to wishlist'}
+                  title={localSaved ? 'Saved in wishlist' : 'Save to wishlist'}
+                  aria-label={localSaved ? 'Saved in wishlist' : 'Save to wishlist'}
                 >
-                  <Bookmark className={`w-4 h-4 ${isSaved ? 'fill-white' : ''}`} />
+                  <Bookmark className={`w-4 h-4 ${localSaved ? 'fill-white' : ''}`} />
                 </button>
               )}
 
               <button
                 onClick={onClose}
                 className="p-2.5 rounded-full bg-black/40 hover:bg-black/60 text-white backdrop-blur-md border border-white/20 transition-all"
-                title="Close modal"
+                title="Close modal (Esc)"
+                aria-label="Close modal"
               >
                 <X className="w-4 h-4" />
               </button>
@@ -160,7 +208,10 @@ export function CityDetailModal({
           {/* Title & Location Banner */}
           <div className="absolute bottom-4 left-4 right-4 text-white z-10 space-y-1">
             <div className="flex items-center gap-2">
-              <h2 className="text-2xl sm:text-3xl font-extrabold tracking-tight drop-shadow-sm flex items-center gap-2">
+              <h2
+                id="city-detail-modal-title"
+                className="text-2xl sm:text-3xl font-extrabold tracking-tight drop-shadow-sm flex items-center gap-2"
+              >
                 <MapPin className="w-6 h-6 text-sky-400 shrink-0" />
                 <span>{city.name}</span>
               </h2>
@@ -188,7 +239,10 @@ export function CityDetailModal({
               </span>
               <span className="text-base font-extrabold text-slate-900 flex items-center gap-0.5">
                 <DollarSign className="w-4 h-4 text-emerald-600 -mr-0.5" />
-                ${city.averageDailyCost} <span className="text-xs font-normal text-slate-500">/ day</span>
+                {city.averageDailyCost !== undefined && city.averageDailyCost !== null
+                  ? city.averageDailyCost
+                  : 0}{' '}
+                <span className="text-xs font-normal text-slate-500">/ day</span>
               </span>
             </div>
 
@@ -313,7 +367,11 @@ export function CityDetailModal({
                         </span>
                         <span>•</span>
                         <span className="font-bold text-slate-900">
-                          {formatCurrency(act.estimatedCost)}
+                          {act.estimatedCost !== undefined && act.estimatedCost !== null
+                            ? act.estimatedCost > 0
+                              ? formatCurrency(act.estimatedCost)
+                              : 'Free ($0)'
+                            : 'Free ($0)'}
                         </span>
                       </div>
 

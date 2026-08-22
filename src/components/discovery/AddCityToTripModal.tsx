@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useCallback } from 'react';
 import { CitySummary, TripSummary } from '@/types';
 import { api } from '@/lib/api';
 import {
@@ -8,7 +8,6 @@ import {
   MapPin,
   Calendar,
   DollarSign,
-  Luggage,
   Plane,
   Building,
   CheckCircle2,
@@ -16,8 +15,9 @@ import {
   RefreshCw,
   PlusCircle,
   ArrowRight,
+  Compass,
 } from 'lucide-react';
-import { formatDate, formatCurrency } from '@/lib/utils';
+import { formatDate, formatCurrency, toNormalizedYMD, isDateWithinRange } from '@/lib/utils';
 import Link from 'next/link';
 
 interface AddCityToTripModalProps {
@@ -36,7 +36,7 @@ export function AddCityToTripModal({
   const [trips, setTrips] = useState<TripSummary[]>([]);
   const [loadingTrips, setLoadingTrips] = useState(false);
   const [selectedTripId, setSelectedTripId] = useState<string>('');
-  
+
   // Stop Fields
   const [arrivalDate, setArrivalDate] = useState('');
   const [departureDate, setDepartureDate] = useState('');
@@ -50,6 +50,23 @@ export function AddCityToTripModal({
   const [error, setError] = useState<string | null>(null);
   const [successTripId, setSuccessTripId] = useState<string | null>(null);
 
+  // Keyboard accessibility: Close on Escape key
+  const handleKeyDown = useCallback(
+    (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        onClose();
+      }
+    },
+    [onClose]
+  );
+
+  useEffect(() => {
+    if (isOpen) {
+      window.addEventListener('keydown', handleKeyDown);
+      return () => window.removeEventListener('keydown', handleKeyDown);
+    }
+  }, [isOpen, handleKeyDown]);
+
   // Load user trips when modal opens
   useEffect(() => {
     if (isOpen) {
@@ -60,9 +77,11 @@ export function AddCityToTripModal({
         try {
           const userTrips = await api.getTrips();
           setTrips(userTrips);
-          if (userTrips.length > 0) {
+          if (userTrips && userTrips.length > 0) {
             setSelectedTripId(userTrips[0].id);
             syncDatesWithTrip(userTrips[0]);
+          } else {
+            setSelectedTripId('');
           }
         } catch (err: any) {
           console.error('Failed to load trips:', err);
@@ -76,10 +95,10 @@ export function AddCityToTripModal({
   }, [isOpen]);
 
   const syncDatesWithTrip = (trip: TripSummary) => {
-    const startIso = typeof trip.startDate === 'string' ? trip.startDate : trip.startDate.toISOString();
-    const endIso = typeof trip.endDate === 'string' ? trip.endDate : trip.endDate.toISOString();
-    setArrivalDate(startIso.split('T')[0]);
-    setDepartureDate(endIso.split('T')[0]);
+    const startYmd = toNormalizedYMD(trip.startDate);
+    const endYmd = toNormalizedYMD(trip.endDate);
+    setArrivalDate(startYmd);
+    setDepartureDate(endYmd);
   };
 
   const handleTripChange = (tripId: string) => {
@@ -98,39 +117,51 @@ export function AddCityToTripModal({
 
     setError(null);
 
-    // Validate Stop Dates within Trip Boundaries
-    const tripStart = new Date(selectedTrip.startDate);
-    const tripEnd = new Date(selectedTrip.endDate);
-    const stopArrival = new Date(arrivalDate);
-    const stopDeparture = new Date(departureDate);
+    // Normalize and validate Stop Dates within Trip Boundaries
+    const normTripStart = toNormalizedYMD(selectedTrip.startDate);
+    const normTripEnd = toNormalizedYMD(selectedTrip.endDate);
+    const normArrival = toNormalizedYMD(arrivalDate);
+    const normDeparture = toNormalizedYMD(departureDate);
 
-    if (isNaN(stopArrival.getTime()) || isNaN(stopDeparture.getTime())) {
+    if (!normArrival || !normDeparture) {
       setError('Please provide valid arrival and departure dates.');
       return;
     }
 
-    if (stopArrival > stopDeparture) {
-      setError('Arrival date cannot be after departure date.');
+    if (normArrival > normDeparture) {
+      setError('Stop arrival date cannot be after departure date.');
       return;
     }
 
-    if (stopArrival < tripStart || stopDeparture > tripEnd) {
+    if (normArrival < normTripStart || normDeparture > normTripEnd) {
       setError(
-        `Stop dates must fall within trip dates (${formatDate(tripStart)} – ${formatDate(tripEnd)}).`
+        `Stop dates must fall within trip dates (${formatDate(selectedTrip.startDate)} – ${formatDate(
+          selectedTrip.endDate
+        )}).`
       );
       return;
     }
 
     setSubmitting(true);
     try {
+      const accCost =
+        accommodationCost !== '' && accommodationCost !== null && !isNaN(Number(accommodationCost))
+          ? Number(accommodationCost)
+          : 0;
+
+      const transCost =
+        transportCost !== '' && transportCost !== null && !isNaN(Number(transportCost))
+          ? Number(transportCost)
+          : 0;
+
       await api.addTripStop(selectedTripId, {
         cityId: city.id,
-        arrivalDate: new Date(arrivalDate).toISOString(),
-        departureDate: new Date(departureDate).toISOString(),
+        arrivalDate: new Date(`${normArrival}T00:00:00.000Z`).toISOString(),
+        departureDate: new Date(`${normDeparture}T00:00:00.000Z`).toISOString(),
         accommodationName: accommodationName.trim() || undefined,
-        accommodationCost: accommodationCost ? Number(accommodationCost) : 0,
+        accommodationCost: accCost,
         transportType: transportType || undefined,
-        transportCost: transportCost ? Number(transportCost) : 0,
+        transportCost: transCost,
         notes: notes.trim() || undefined,
       });
 
@@ -149,7 +180,12 @@ export function AddCityToTripModal({
   if (!isOpen || !city) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 sm:p-6 md:p-10 overflow-y-auto">
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="add-city-modal-title"
+      className="fixed inset-0 z-50 flex items-center justify-center p-4 sm:p-6 md:p-10 overflow-y-auto"
+    >
       {/* Backdrop */}
       <div
         className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm transition-opacity"
@@ -165,7 +201,9 @@ export function AddCityToTripModal({
               <MapPin className="w-5 h-5" />
             </div>
             <div>
-              <h2 className="text-lg font-bold">Add {city.name} to Trip</h2>
+              <h2 id="add-city-modal-title" className="text-lg font-bold">
+                Add {city.name} to Trip
+              </h2>
               <p className="text-xs text-slate-300">
                 {city.country} {city.region ? `• ${city.region}` : ''}
               </p>
@@ -175,6 +213,8 @@ export function AddCityToTripModal({
           <button
             onClick={onClose}
             className="p-2 rounded-xl bg-white/10 hover:bg-white/20 text-white transition-colors"
+            title="Close modal (Esc)"
+            aria-label="Close modal"
           >
             <X className="w-4 h-4" />
           </button>
@@ -213,6 +253,40 @@ export function AddCityToTripModal({
                 </button>
               </div>
             </div>
+          ) : loadingTrips ? (
+            <div className="p-12 text-center space-y-3">
+              <RefreshCw className="w-8 h-8 text-sky-600 animate-spin mx-auto" />
+              <p className="text-xs text-slate-500 font-medium">Loading your trip list...</p>
+            </div>
+          ) : trips.length === 0 ? (
+            /* Tripless Empty State */
+            <div className="p-8 text-center space-y-4 bg-slate-50 rounded-2xl border border-slate-200">
+              <div className="w-14 h-14 rounded-2xl bg-sky-100 text-sky-700 mx-auto flex items-center justify-center">
+                <Compass className="w-7 h-7" />
+              </div>
+              <div className="space-y-1">
+                <h3 className="text-base font-bold text-slate-900">No Trips Created Yet</h3>
+                <p className="text-xs text-slate-500 max-w-sm mx-auto leading-relaxed">
+                  You don&apos;t have any active trips. Create a new trip to start building your
+                  itinerary with <strong>{city.name}</strong>.
+                </p>
+              </div>
+              <div className="pt-2 flex items-center justify-center gap-3">
+                <Link
+                  href={`/trips/create?destination=${encodeURIComponent(city.name)}`}
+                  className="inline-flex items-center gap-2 px-5 py-2.5 bg-slate-900 hover:bg-slate-800 text-white rounded-xl text-xs font-bold shadow-md transition-all"
+                >
+                  <PlusCircle className="w-4 h-4 text-sky-400" />
+                  Create a Trip to {city.name}
+                </Link>
+                <button
+                  onClick={onClose}
+                  className="px-4 py-2.5 rounded-xl border border-slate-200 bg-white text-slate-700 text-xs font-semibold hover:bg-slate-100 transition-colors"
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
           ) : (
             <form onSubmit={handleSubmit} className="space-y-4">
               {error && (
@@ -235,38 +309,17 @@ export function AddCityToTripModal({
                   </Link>
                 </label>
 
-                {loadingTrips ? (
-                  <div className="p-3 rounded-xl border border-slate-200 text-xs text-slate-400 flex items-center gap-2">
-                    <RefreshCw className="w-3.5 h-3.5 animate-spin text-sky-600" />
-                    Loading your trips...
-                  </div>
-                ) : trips.length > 0 ? (
-                  <select
-                    value={selectedTripId}
-                    onChange={(e) => handleTripChange(e.target.value)}
-                    className="w-full px-3.5 py-2.5 rounded-xl border border-slate-200 bg-white text-xs font-semibold text-slate-900 focus:outline-none focus:ring-2 focus:ring-sky-500/20 focus:border-sky-500"
-                  >
-                    {trips.map((t) => (
-                      <option key={t.id} value={t.id}>
-                        {t.title} ({formatDate(t.startDate)} – {formatDate(t.endDate)})
-                      </option>
-                    ))}
-                  </select>
-                ) : (
-                  <div className="p-4 rounded-xl bg-amber-50 border border-amber-200 text-amber-800 text-xs space-y-2">
-                    <p className="font-semibold">No active trips found.</p>
-                    <p className="text-[11px]">
-                      Create a new trip to start adding destinations and activities.
-                    </p>
-                    <Link
-                      href={`/trips/create?destination=${encodeURIComponent(city.name)}`}
-                      className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-slate-900 text-white rounded-lg text-[11px] font-bold"
-                    >
-                      <PlusCircle className="w-3.5 h-3.5" />
-                      Create Trip Now
-                    </Link>
-                  </div>
-                )}
+                <select
+                  value={selectedTripId}
+                  onChange={(e) => handleTripChange(e.target.value)}
+                  className="w-full px-3.5 py-2.5 rounded-xl border border-slate-200 bg-white text-xs font-semibold text-slate-900 focus:outline-none focus:ring-2 focus:ring-sky-500/20 focus:border-sky-500"
+                >
+                  {trips.map((t) => (
+                    <option key={t.id} value={t.id}>
+                      {t.title} ({formatDate(t.startDate)} – {formatDate(t.endDate)})
+                    </option>
+                  ))}
+                </select>
               </div>
 
               {selectedTrip && (

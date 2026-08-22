@@ -1,6 +1,6 @@
 'use client';
 
-import React from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { ActivitySummary } from '@/types';
 import {
   X,
@@ -27,12 +27,40 @@ interface ActivityDetailModalProps {
   onAddToTrip?: (activity: ActivitySummary) => void;
 }
 
+const FALLBACK_ACTIVITY_MODAL_IMAGE =
+  'https://images.unsplash.com/photo-1469854523086-cc02fe5d8800?auto=format&fit=crop&w=1200&q=80';
+
 export function ActivityDetailModal({
   activity,
   isOpen,
   onClose,
   onAddToTrip,
 }: ActivityDetailModalProps) {
+  const [imgSrc, setImgSrc] = useState(activity?.imageUrl || FALLBACK_ACTIVITY_MODAL_IMAGE);
+
+  // Escape key handler
+  const handleKeyDown = useCallback(
+    (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        onClose();
+      }
+    },
+    [onClose]
+  );
+
+  useEffect(() => {
+    if (isOpen) {
+      window.addEventListener('keydown', handleKeyDown);
+      return () => window.removeEventListener('keydown', handleKeyDown);
+    }
+  }, [isOpen, handleKeyDown]);
+
+  useEffect(() => {
+    if (activity) {
+      setImgSrc(activity.imageUrl || FALLBACK_ACTIVITY_MODAL_IMAGE);
+    }
+  }, [activity]);
+
   if (!isOpen || !activity) return null;
 
   const getCategoryTheme = (category: string) => {
@@ -79,7 +107,12 @@ export function ActivityDetailModal({
   const { icon: CategoryIcon, style: categoryStyle } = getCategoryTheme(activity.category);
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 sm:p-6 md:p-10 overflow-y-auto">
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="activity-detail-modal-title"
+      className="fixed inset-0 z-50 flex items-center justify-center p-4 sm:p-6 md:p-10 overflow-y-auto"
+    >
       {/* Backdrop */}
       <div
         className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm transition-opacity"
@@ -91,15 +124,13 @@ export function ActivityDetailModal({
         {/* Cover Photo Area */}
         <div className="relative h-60 sm:h-64 w-full bg-slate-900 shrink-0 overflow-hidden">
           <img
-            src={
-              activity.imageUrl ||
-              'https://images.unsplash.com/photo-1469854523086-cc02fe5d8800?auto=format&fit=crop&w=1200&q=80'
-            }
+            src={imgSrc}
             alt={activity.title}
             className="w-full h-full object-cover opacity-90"
-            onError={(e) => {
-              (e.target as HTMLImageElement).src =
-                'https://images.unsplash.com/photo-1469854523086-cc02fe5d8800?auto=format&fit=crop&w=1200&q=80';
+            onError={() => {
+              if (imgSrc !== FALLBACK_ACTIVITY_MODAL_IMAGE) {
+                setImgSrc(FALLBACK_ACTIVITY_MODAL_IMAGE);
+              }
             }}
           />
           <div className="absolute inset-0 bg-gradient-to-t from-slate-950 via-slate-950/40 to-transparent" />
@@ -116,7 +147,8 @@ export function ActivityDetailModal({
             <button
               onClick={onClose}
               className="p-2.5 rounded-full bg-black/40 hover:bg-black/60 text-white backdrop-blur-md border border-white/20 transition-all"
-              title="Close modal"
+              title="Close modal (Esc)"
+              aria-label="Close modal"
             >
               <X className="w-4 h-4" />
             </button>
@@ -124,7 +156,10 @@ export function ActivityDetailModal({
 
           {/* Bottom Title & Location */}
           <div className="absolute bottom-4 left-4 right-4 text-white z-10 space-y-1">
-            <h2 className="text-xl sm:text-2xl font-extrabold tracking-tight drop-shadow-sm">
+            <h2
+              id="activity-detail-modal-title"
+              className="text-xl sm:text-2xl font-extrabold tracking-tight drop-shadow-sm"
+            >
               {activity.title}
             </h2>
             {(activity.cityName || activity.countryName) && (
@@ -163,7 +198,11 @@ export function ActivityDetailModal({
               </span>
               <span className="text-sm font-extrabold text-slate-900 flex items-center gap-1">
                 <DollarSign className="w-4 h-4 text-emerald-600" />
-                {activity.estimatedCost > 0 ? formatCurrency(activity.estimatedCost) : 'Free Experience'}
+                {activity.estimatedCost !== undefined && activity.estimatedCost !== null
+                  ? activity.estimatedCost > 0
+                    ? formatCurrency(activity.estimatedCost)
+                    : 'Free Experience ($0)'
+                  : 'Free Experience ($0)'}
               </span>
             </div>
 

@@ -1,7 +1,7 @@
 'use client';
 
 import React, { Suspense, useEffect, useMemo, useState } from 'react';
-import { useSearchParams, useRouter } from 'next/navigation';
+import { useSearchParams, useRouter, usePathname } from 'next/navigation';
 import { api } from '@/lib/api';
 import { CitySummary, ActivitySummary } from '@/types';
 import { CityCard } from '@/components/discovery/CityCard';
@@ -19,13 +19,12 @@ import {
   RefreshCw,
   AlertCircle,
   SearchX,
-  Bookmark,
-  SlidersHorizontal,
 } from 'lucide-react';
 
 function ExploreContent() {
   const searchParams = useSearchParams();
   const router = useRouter();
+  const pathname = usePathname();
 
   // Active Tab: 'cities' | 'activities'
   const initialTab = searchParams.get('tab') === 'activities' ? 'activities' : 'cities';
@@ -37,20 +36,30 @@ function ExploreContent() {
   const [citiesError, setCitiesError] = useState<string | null>(null);
   const [savedCityIds, setSavedCityIds] = useState<Set<string>>(new Set());
 
-  // City Filters
-  const [citySearch, setCitySearch] = useState(searchParams.get('q') || '');
+  // City Search & Filters with 300ms Debounce
+  const [citySearchInput, setCitySearchInput] = useState(searchParams.get('q') || '');
+  const [debouncedCitySearch, setDebouncedCitySearch] = useState(citySearchInput);
   const [selectedRegion, setSelectedRegion] = useState(searchParams.get('region') || 'All');
   const [selectedCountry, setSelectedCountry] = useState(searchParams.get('country') || 'All');
   const [selectedCostIndex, setSelectedCostIndex] = useState(searchParams.get('costIndex') || 'All');
   const [citySortBy, setCitySortBy] = useState('popularity');
+
+  // Debounce city search by 300ms
+  useEffect(() => {
+    const handler = setTimeout(() => {
+      setDebouncedCitySearch(citySearchInput.trim());
+    }, 300);
+    return () => clearTimeout(handler);
+  }, [citySearchInput]);
 
   // --- ACTIVITY STATE ---
   const [activities, setActivities] = useState<ActivitySummary[]>([]);
   const [loadingActivities, setLoadingActivities] = useState(true);
   const [activitiesError, setActivitiesError] = useState<string | null>(null);
 
-  // Activity Filters
-  const [activitySearch, setActivitySearch] = useState(searchParams.get('activityQ') || '');
+  // Activity Search & Filters with 300ms Debounce
+  const [activitySearchInput, setActivitySearchInput] = useState(searchParams.get('activityQ') || '');
+  const [debouncedActivitySearch, setDebouncedActivitySearch] = useState(activitySearchInput);
   const [selectedCategory, setSelectedCategory] = useState(searchParams.get('category') || 'All');
   const [selectedCityId, setSelectedCityId] = useState(searchParams.get('cityId') || 'All');
   const [maxCost, setMaxCost] = useState<number | undefined>(
@@ -58,6 +67,14 @@ function ExploreContent() {
   );
   const [selectedDuration, setSelectedDuration] = useState('All');
   const [activitySortBy, setActivitySortBy] = useState('rating');
+
+  // Debounce activity search by 300ms
+  useEffect(() => {
+    const handler = setTimeout(() => {
+      setDebouncedActivitySearch(activitySearchInput.trim());
+    }, 300);
+    return () => clearTimeout(handler);
+  }, [activitySearchInput]);
 
   // --- MODALS STATE ---
   const [selectedCityForDetail, setSelectedCityForDetail] = useState<CitySummary | null>(null);
@@ -73,6 +90,42 @@ function ExploreContent() {
     setTimeout(() => setToastMessage(null), 3500);
   };
 
+  // --- URL QUERY PARAMETER SYNC (Omit empty or default values) ---
+  useEffect(() => {
+    const params = new URLSearchParams();
+
+    if (activeTab === 'activities') {
+      params.set('tab', 'activities');
+    }
+
+    if (activeTab === 'cities') {
+      if (debouncedCitySearch) params.set('q', debouncedCitySearch);
+      if (selectedRegion && selectedRegion !== 'All') params.set('region', selectedRegion);
+      if (selectedCountry && selectedCountry !== 'All') params.set('country', selectedCountry);
+      if (selectedCostIndex && selectedCostIndex !== 'All') params.set('costIndex', selectedCostIndex);
+    } else {
+      if (debouncedActivitySearch) params.set('activityQ', debouncedActivitySearch);
+      if (selectedCategory && selectedCategory !== 'All') params.set('category', selectedCategory);
+      if (selectedCityId && selectedCityId !== 'All') params.set('cityId', selectedCityId);
+      if (maxCost !== undefined) params.set('maxCost', String(maxCost));
+    }
+
+    const queryString = params.toString();
+    const newUrl = queryString ? `${pathname}?${queryString}` : pathname;
+    window.history.replaceState(null, '', newUrl);
+  }, [
+    activeTab,
+    debouncedCitySearch,
+    selectedRegion,
+    selectedCountry,
+    selectedCostIndex,
+    debouncedActivitySearch,
+    selectedCategory,
+    selectedCityId,
+    maxCost,
+    pathname,
+  ]);
+
   // --- FETCH SAVED DESTINATIONS ---
   useEffect(() => {
     const loadSaved = async () => {
@@ -86,13 +139,13 @@ function ExploreContent() {
     loadSaved();
   }, []);
 
-  // --- FETCH CITIES ---
+  // --- FETCH CITIES (Debounced) ---
   const fetchCities = async () => {
     setLoadingCities(true);
     setCitiesError(null);
     try {
       const data = await api.getCities({
-        q: citySearch || undefined,
+        q: debouncedCitySearch || undefined,
         region: selectedRegion !== 'All' ? selectedRegion : undefined,
         country: selectedCountry !== 'All' ? selectedCountry : undefined,
         costIndex: selectedCostIndex !== 'All' ? selectedCostIndex : undefined,
@@ -108,9 +161,9 @@ function ExploreContent() {
 
   useEffect(() => {
     fetchCities();
-  }, [citySearch, selectedRegion, selectedCountry, selectedCostIndex]);
+  }, [debouncedCitySearch, selectedRegion, selectedCountry, selectedCostIndex]);
 
-  // --- FETCH ACTIVITIES ---
+  // --- FETCH ACTIVITIES (Debounced) ---
   const fetchActivities = async () => {
     setLoadingActivities(true);
     setActivitiesError(null);
@@ -119,7 +172,7 @@ function ExploreContent() {
         cityId: selectedCityId !== 'All' ? selectedCityId : undefined,
         category: selectedCategory !== 'All' ? selectedCategory : undefined,
         maxCost: maxCost !== undefined ? maxCost : undefined,
-        q: activitySearch || undefined,
+        q: debouncedActivitySearch || undefined,
       });
       setActivities(data);
     } catch (err: any) {
@@ -132,26 +185,42 @@ function ExploreContent() {
 
   useEffect(() => {
     fetchActivities();
-  }, [activitySearch, selectedCategory, selectedCityId, maxCost]);
+  }, [debouncedActivitySearch, selectedCategory, selectedCityId, maxCost]);
 
-  // --- TOGGLE SAVE DESTINATION ---
+  // --- OPTIMISTIC TOGGLE SAVE DESTINATION ---
   const handleToggleSaveCity = async (cityId: string) => {
+    const isCurrentlySaved = savedCityIds.has(cityId);
+
+    // Optimistically update
+    setSavedCityIds((prev) => {
+      const next = new Set(prev);
+      if (isCurrentlySaved) {
+        next.delete(cityId);
+      } else {
+        next.add(cityId);
+      }
+      return next;
+    });
+
     try {
-      if (savedCityIds.has(cityId)) {
+      if (isCurrentlySaved) {
         await api.removeSavedDestination(cityId);
-        setSavedCityIds((prev) => {
-          const next = new Set(prev);
-          next.delete(cityId);
-          return next;
-        });
         showToast('Destination removed from wishlist');
       } else {
         await api.saveDestination(cityId);
-        setSavedCityIds((prev) => new Set(prev).add(cityId));
         showToast('Destination saved to your wishlist! ❤️');
       }
     } catch (err: any) {
-      console.error('Failed to toggle save destination:', err);
+      // Revert optimistic state on failure
+      setSavedCityIds((prev) => {
+        const next = new Set(prev);
+        if (isCurrentlySaved) {
+          next.add(cityId);
+        } else {
+          next.delete(cityId);
+        }
+        return next;
+      });
       showToast(err.message || 'Please log in to bookmark destinations');
     }
   };
@@ -181,7 +250,8 @@ function ExploreContent() {
   }, [cities, citySortBy]);
 
   const handleResetCityFilters = () => {
-    setCitySearch('');
+    setCitySearchInput('');
+    setDebouncedCitySearch('');
     setSelectedRegion('All');
     setSelectedCountry('All');
     setSelectedCostIndex('All');
@@ -226,7 +296,8 @@ function ExploreContent() {
   }, [activities, selectedDuration, activitySortBy]);
 
   const handleResetActivityFilters = () => {
-    setActivitySearch('');
+    setActivitySearchInput('');
+    setDebouncedActivitySearch('');
     setSelectedCategory('All');
     setSelectedCityId('All');
     setMaxCost(undefined);
@@ -320,8 +391,8 @@ function ExploreContent() {
           <div className="space-y-6">
             {/* Filters Bar */}
             <CityFilters
-              search={citySearch}
-              onSearchChange={setCitySearch}
+              search={citySearchInput}
+              onSearchChange={setCitySearchInput}
               selectedRegion={selectedRegion}
               onRegionChange={setSelectedRegion}
               selectedCountry={selectedCountry}
@@ -409,8 +480,8 @@ function ExploreContent() {
           <div className="space-y-6">
             {/* Filters Bar */}
             <ActivityFilters
-              search={activitySearch}
-              onSearchChange={setActivitySearch}
+              search={activitySearchInput}
+              onSearchChange={setActivitySearchInput}
               selectedCategory={selectedCategory}
               onCategoryChange={setSelectedCategory}
               selectedCityId={selectedCityId}
