@@ -4,7 +4,7 @@ GlobeTrotter is a modern, responsive, and intelligent personalized travel planni
 
 ---
 
-## 🌟 Key Features (Frontend - Dhanvi Lead)
+## 🌟 Key Features (Frontend - Abhay Lead)
 
 1. **Traveler Dashboard (`/`)**: Real-time KPI summary (total trips, upcoming departures, saved bucket list count, cumulative budget targets), quick actions, active trips carousel, and curated recommended destinations with daily cost indexes.
 2. **My Trips Hub (`/my-trips`)**: Manage your trips in Grid or List view, filter by status (All, Upcoming, Active Now, Completed), instant search, and quick actions:
