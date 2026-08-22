@@ -37,3 +37,28 @@ export function calculateDurationDays(startDate: string | Date | null | undefine
   const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24)) + 1;
   return diffDays || 1;
 }
+
+export function toNormalizedYMD(dateInput: string | Date | null | undefined): string {
+  if (!dateInput) return '';
+  if (typeof dateInput === 'string') {
+    // If it's already YYYY-MM-DD or contains T, extract YYYY-MM-DD
+    const match = dateInput.match(/^\d{4}-\d{2}-\d{2}/);
+    if (match) return match[0];
+  }
+  const d = typeof dateInput === 'string' ? new Date(dateInput) : dateInput;
+  if (isNaN(d.getTime())) return '';
+  return d.toISOString().split('T')[0];
+}
+
+export function isDateWithinRange(
+  targetDate: string | Date,
+  rangeStart: string | Date,
+  rangeEnd: string | Date
+): boolean {
+  const target = toNormalizedYMD(targetDate);
+  const start = toNormalizedYMD(rangeStart);
+  const end = toNormalizedYMD(rangeEnd);
+  if (!target || !start || !end) return false;
+  return target >= start && target <= end;
+}
+

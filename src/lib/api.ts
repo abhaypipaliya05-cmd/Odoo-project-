@@ -1,4 +1,5 @@
 import {
+  ActivitySummary,
   ApiResponse,
   ApiSuccessResponse,
   AuthenticatedUser,
@@ -7,7 +8,9 @@ import {
   CityWithActivities,
   DashboardStats,
   PublicTripDetail,
+  TripActivityDetail,
   TripDetail,
+  TripStopDetail,
   TripSummary,
   TripTimeline,
   UserProfile,
@@ -208,18 +211,42 @@ class ApiClient {
   }
 
   // --- Cities & Discovery ---
-  async getCities(params?: { q?: string; country?: string; region?: string; costIndex?: string }): Promise<CitySummary[]> {
+  async getCities(params?: {
+    q?: string;
+    country?: string;
+    region?: string;
+    costIndex?: string;
+    limit?: number;
+  }): Promise<CitySummary[]> {
     const query = new URLSearchParams();
     if (params?.q) query.append('q', params.q);
     if (params?.country) query.append('country', params.country);
     if (params?.region) query.append('region', params.region);
     if (params?.costIndex) query.append('costIndex', params.costIndex);
+    if (params?.limit) query.append('limit', String(params.limit));
     const qs = query.toString() ? `?${query.toString()}` : '';
     return this.request<CitySummary[]>(`/cities${qs}`);
   }
 
   async getCity(id: string): Promise<CityWithActivities> {
     return this.request<CityWithActivities>(`/cities/${id}`);
+  }
+
+  async getActivities(params?: {
+    cityId?: string;
+    category?: string;
+    maxCost?: number;
+    q?: string;
+    limit?: number;
+  }): Promise<ActivitySummary[]> {
+    const query = new URLSearchParams();
+    if (params?.cityId) query.append('cityId', params.cityId);
+    if (params?.category) query.append('category', params.category);
+    if (params?.maxCost !== undefined) query.append('maxCost', String(params.maxCost));
+    if (params?.q) query.append('q', params.q);
+    if (params?.limit) query.append('limit', String(params.limit));
+    const qs = query.toString() ? `?${query.toString()}` : '';
+    return this.request<ActivitySummary[]>(`/activities${qs}`);
   }
 
   async getSavedDestinations(): Promise<CitySummary[]> {
@@ -235,6 +262,56 @@ class ApiClient {
 
   async removeSavedDestination(cityId: string): Promise<{ message: string }> {
     return this.request<{ message: string }>(`/saved-destinations/${cityId}`, {
+      method: 'DELETE',
+    });
+  }
+
+  // --- Itinerary Stops & Activities ---
+  async addTripStop(
+    tripId: string,
+    data: {
+      cityId: string;
+      arrivalDate: string;
+      departureDate: string;
+      orderIndex?: number;
+      accommodationName?: string | null;
+      accommodationCost?: number;
+      transportType?: string | null;
+      transportCost?: number;
+      notes?: string | null;
+    }
+  ): Promise<TripStopDetail> {
+    return this.request<TripStopDetail>(`/trips/${tripId}/stops`, {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async addTripActivity(
+    tripId: string,
+    stopId: string,
+    data: {
+      activityId?: string | null;
+      customTitle?: string | null;
+      customDescription?: string | null;
+      category?: string;
+      scheduledDate: string;
+      startTime?: string | null;
+      durationMinutes?: number;
+      actualCost?: number;
+      status?: string;
+      notes?: string | null;
+      orderIndex?: number;
+    }
+  ): Promise<TripActivityDetail> {
+    return this.request<TripActivityDetail>(`/trips/${tripId}/stops/${stopId}/activities`, {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async removeTripActivity(tripId: string, activityId: string): Promise<{ message: string }> {
+    return this.request<{ message: string }>(`/trips/${tripId}/activities/${activityId}`, {
       method: 'DELETE',
     });
   }
