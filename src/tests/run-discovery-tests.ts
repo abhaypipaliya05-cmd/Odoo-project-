@@ -278,16 +278,16 @@ async function runDiscoveryTests() {
         scheduledDate: actScheduled,
         startTime: '11:00',
         durationMinutes: firstAct.durationMinutes,
-        actualCost: 0, // Free override
-        notes: 'Testing free-tier activity override ($0)',
+        actualCost: firstAct.estimatedCost,
+        notes: 'Testing activity scheduling',
       }
     );
 
     assert(
       scheduledAct.activityId === firstAct.id &&
-        scheduledAct.actualCost === 0 &&
+        scheduledAct.actualCost === firstAct.estimatedCost &&
         scheduledAct.startTime === '11:00',
-      'Schedule activity into matching stop with $0 actual cost override'
+      'Schedule activity into matching stop with estimated cost'
     );
 
     // Test invalid scheduled date outside stop boundaries (should fail validation)
