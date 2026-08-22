@@ -198,6 +198,31 @@ class ApiClient {
     return this.request<PublicTripDetail>(`/trips/share/${slug}`);
   }
 
+  // --- Expenses APIs ---
+  async addExpense(
+    tripId: string,
+    data: {
+      category: 'TRANSPORT' | 'STAY' | 'ACTIVITIES' | 'MEALS' | 'MISCELLANEOUS';
+      title: string;
+      amount: number;
+      currency?: string;
+      date?: string;
+      notes?: string | null;
+      tripStopId?: string | null;
+    }
+  ) {
+    return this.request(`/trips/${tripId}/expenses`, {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async deleteExpense(tripId: string, expenseId: string): Promise<{ message: string }> {
+    return this.request<{ message: string }>(`/trips/${tripId}/expenses/${expenseId}`, {
+      method: 'DELETE',
+    });
+  }
+
   // --- Profile APIs ---
   async getProfile(): Promise<UserProfile> {
     return this.request<UserProfile>('/profile');
@@ -287,6 +312,39 @@ class ApiClient {
     });
   }
 
+  async updateTripStop(
+    tripId: string,
+    stopId: string,
+    data: {
+      arrivalDate?: string;
+      departureDate?: string;
+      orderIndex?: number;
+      accommodationName?: string | null;
+      accommodationCost?: number;
+      transportType?: string | null;
+      transportCost?: number;
+      notes?: string | null;
+    }
+  ): Promise<TripStopDetail> {
+    return this.request<TripStopDetail>(`/trips/${tripId}/stops/${stopId}`, {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async removeTripStop(tripId: string, stopId: string): Promise<{ message: string }> {
+    return this.request<{ message: string }>(`/trips/${tripId}/stops/${stopId}`, {
+      method: 'DELETE',
+    });
+  }
+
+  async reorderTripStops(tripId: string, stopIds: string[]): Promise<TripStopDetail[]> {
+    return this.request<TripStopDetail[]>(`/trips/${tripId}/stops/reorder`, {
+      method: 'PUT',
+      body: JSON.stringify({ stopIds }),
+    });
+  }
+
   async addTripActivity(
     tripId: string,
     stopId: string,
@@ -310,9 +368,51 @@ class ApiClient {
     });
   }
 
+  async updateTripActivity(
+    tripId: string,
+    activityId: string,
+    data: {
+      customTitle?: string | null;
+      customDescription?: string | null;
+      category?: string;
+      scheduledDate?: string;
+      startTime?: string | null;
+      durationMinutes?: number;
+      actualCost?: number;
+      status?: string;
+      notes?: string | null;
+      orderIndex?: number;
+    }
+  ): Promise<TripActivityDetail> {
+    return this.request<TripActivityDetail>(`/trips/${tripId}/activities/${activityId}`, {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    });
+  }
+
   async removeTripActivity(tripId: string, activityId: string): Promise<{ message: string }> {
     return this.request<{ message: string }>(`/trips/${tripId}/activities/${activityId}`, {
       method: 'DELETE',
+    });
+  }
+
+  async reorderTripActivities(tripId: string, activityIds: string[]): Promise<{ message: string }> {
+    return this.request<{ message: string }>(`/trips/${tripId}/activities/reorder`, {
+      method: 'PUT',
+      body: JSON.stringify({ activityIds }),
+    });
+  }
+
+  // --- AI APIs ---
+  async getAiRecommendations(data?: {
+    targetBudget?: number;
+    preferredCategory?: string;
+    preferredRegion?: string;
+    vibe?: string;
+  }) {
+    return this.request('/ai/recommendations', {
+      method: 'POST',
+      body: JSON.stringify(data || {}),
     });
   }
 }
