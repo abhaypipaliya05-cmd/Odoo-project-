@@ -14,6 +14,12 @@
 /build
 /dist
 
+# SQLite databases
+*.db
+*.db-journal
+dev.db
+prisma/dev.db
+
 # Misc
 .DS_Store
 *.pem
