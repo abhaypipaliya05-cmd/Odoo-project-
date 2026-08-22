@@ -30,6 +30,7 @@ export function Navbar() {
     { name: 'My Trips', href: '/my-trips', icon: Plane },
     { name: 'Explore', href: '/explore', icon: MapPin },
     { name: 'Saved', href: '/saved', icon: Bookmark },
+    { name: 'Video Demo', href: '/demo', icon: Sparkles },
   ];
 
   const handleLogout = async () => {
